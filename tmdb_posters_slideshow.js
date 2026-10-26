@@ -4,6 +4,7 @@
     if (window.plugin_tmdb_posters_slideshow) return;
     window.plugin_tmdb_posters_slideshow = true;
 
+    var TMDB_API_KEY = '2556f3c34d07b68f8eb2746f95d200cd'; // https://www.themoviedb.org/settings/api
     var PAGES = 3;            // скільки сторінок TMDB тягнути (по 20 постерів)
     var AUTOPLAY_MS = 8000;   // інтервал автоперемикання (Enter — пауза/старт)
     var IMG_SIZE = 'w780';    // w500 / w780 / original
@@ -39,6 +40,11 @@
 
     function fetchPage(period, page, cb) {
         var url = Lampa.TMDB.api('trending/all/' + period + '?language=' + lang() + '&page=' + page);
+        if (url.indexOf('api_key=') === -1) {
+            var key = TMDB_API_KEY;
+            if (!key) { try { key = Lampa.TMDB.key(); } catch (e) {} }
+            url += '&api_key=' + key;
+        }
         var req = new Lampa.Reguest();
         req.silent(url, function (json) {
             cb(json && json.results ? json.results : []);
