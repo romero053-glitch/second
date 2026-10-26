@@ -6,27 +6,24 @@
 
     var TMDB_API_KEY = '2556f3c34d07b68f8eb2746f95d200cd'; // https://www.themoviedb.org/settings/api
     var PAGES = 3;            // скільки сторінок TMDB тягнути (по 20 позицій)
-    var AUTOPLAY_MS = 10000;  // інтервал автоперемикання (OK — пауза/старт)
+    var AUTOPLAY_MS = 10000;  // інтервал автоперемикання
     var POSTER_SIZE = 'w780'; // w500 / w780 / original
     var BACKDROP_SIZE = 'w1280';
 
-    var state = {
-        items: [],
-        index: 0,
-        timer: null,
-        playing: true,
-        hintTimer: null,
-        prevController: null,
-        root: null,
-        bg: null,
-        content: null,
-        counter: null,
-        hint: null,
-        token: 0
-    };
-
     var genres = {};
     var lastError = '';
+
+    /* ---------- Налаштування (зберігаються в Lampa.Storage) ---------- */
+
+    function homeEnabled() {
+        return String(Lampa.Storage.get('tps_home', 'true')) !== 'false';
+    }
+
+    function homePeriod() {
+        return String(Lampa.Storage.get('tps_period', 'day')) === 'week' ? 'week' : 'day';
+    }
+
+    /* ---------- TMDB ---------- */
 
     function lang() {
         return Lampa.Storage.get('tmdb_lang', Lampa.Storage.get('language', 'uk'));
@@ -72,7 +69,7 @@
         });
     }
 
-    function load(period, done) {
+    function loadTrending(period, done) {
         var left = PAGES, all = [];
         for (var p = 1; p <= PAGES; p++) {
             (function (page) {
@@ -90,6 +87,15 @@
             })(p);
         }
     }
+
+    // жанри + список трендів
+    function prepare(period, done) {
+        lastError = '';
+        function go() { loadTrending(period, done); }
+        if (Object.keys(genres).length) go(); else loadGenres(go);
+    }
+
+    /* ---------- Відображення ---------- */
 
     function esc(s) {
         return String(s || '').replace(/[&<>"]/g, function (c) {
@@ -127,147 +133,262 @@
             '</div>';
     }
 
-    function buildUI() {
-        var root = $(
-            '<div class="tps-root">' +
-                '<div class="tps-bg"></div>' +
-                '<div class="tps-shade"></div>' +
-                '<div class="tps-content"></div>' +
-                '<div class="tps-counter"></div>' +
-                '<div class="tps-hint"></div>' +
-            '</div>'
+    function preload(m) {
+        if (!m) return;
+        var im = new Image(); im.src = imgUrl(POSTER_SIZE, m.poster_path);
+        if (m.backdrop_path) { var bi = new Image(); bi.src = imgUrl(BACKDROP_SIZE, m.backdrop_path); }
+    }
+
+    /* Слайдер: малює у root, нічого не знає про контролери Lampa */
+    function createSlider(root, items, onOpen) {
+        root.html(
+            '<div class="tps-bg"></div>' +
+            '<div class="tps-shade"></div>' +
+            '<div class="tps-content"></div>' +
+            '<div class="tps-counter"></div>' +
+            '<div class="tps-hint"></div>'
         );
-        $('body').append(root);
-        state.root = root;
-        state.bg = root.find('.tps-bg');
-        state.content = root.find('.tps-content');
-        state.counter = root.find('.tps-counter');
-        state.hint = root.find('.tps-hint');
+
+        var bg = root.find('.tps-bg');
+        var content = root.find('.tps-content');
+        var counter = root.find('.tps-counter');
+        var hint = root.find('.tps-hint');
+
+        var s = { index: 0, playing: true, timer: null, hintTimer: null, token: 0, dead: false };
+
+        function n() { return items.length; }
+
+        s.current = function () { return items[s.index]; };
+
+        function restart() {
+            clearInterval(s.timer);
+            if (s.playing && !s.dead) {
+                s.timer = setInterval(function () { s.show(s.index + 1); }, AUTOPLAY_MS);
+            }
+        }
+
+        s.show = function (i) {
+            if (s.dead || !n()) return;
+            s.index = ((i % n()) + n()) % n();
+            var m = items[s.index];
+            var token = ++s.token;
+
+            content.css('opacity', 0);
+            bg.css('opacity', 0);
+
+            var posterSrc = imgUrl(POSTER_SIZE, m.poster_path);
+            var bgSrc = m.backdrop_path ? imgUrl(BACKDROP_SIZE, m.backdrop_path) : posterSrc;
+            var blur = !m.backdrop_path;
+
+            var ready = 0;
+            function apply() {
+                if (token !== s.token || s.dead) return;
+                if (++ready < 2) return;
+                bg.css({
+                    'background-image': 'url(' + bgSrc + ')',
+                    'filter': blur ? 'blur(25px) brightness(.6)' : 'none',
+                    'opacity': 1
+                });
+                content.html(contentHtml(m)).css('opacity', 1);
+            }
+
+            var a = new Image(); a.onload = a.onerror = apply; a.src = posterSrc;
+            var b = new Image(); b.onload = b.onerror = apply; b.src = bgSrc;
+
+            counter.text((s.index + 1) + ' / ' + n());
+            preload(items[(s.index + 1) % n()]);
+            preload(items[(s.index - 1 + n()) % n()]);
+            restart();
+        };
+
+        s.flash = function (text) {
+            hint.text(text).css('opacity', 1);
+            clearTimeout(s.hintTimer);
+            s.hintTimer = setTimeout(function () { hint.css('opacity', 0); }, 2500);
+        };
+
+        s.togglePlay = function () {
+            s.playing = !s.playing;
+            restart();
+            s.flash(s.playing ? 'Автопоказ: увімкнено' : 'Пауза');
+        };
+
+        s.pause = function () { clearInterval(s.timer); };
+        s.resume = function () { restart(); };
+
+        s.destroy = function () {
+            s.dead = true;
+            s.token++;
+            clearInterval(s.timer);
+            clearTimeout(s.hintTimer);
+        };
+
+        // клік / тап по постеру — відкрити сторінку фільму
+        root.on('click', '.tps-poster', function () {
+            if (onOpen) onOpen(s.current());
+        });
+
+        return s;
     }
 
-    function preload(i) {
-        var n = state.items.length;
-        var m = state.items[(i + n) % n];
-        if (m) {
-            var im = new Image(); im.src = imgUrl(POSTER_SIZE, m.poster_path);
-            if (m.backdrop_path) { var bi = new Image(); bi.src = imgUrl(BACKDROP_SIZE, m.backdrop_path); }
+    function openFull(m) {
+        if (!m) return;
+        Lampa.Activity.push({
+            url: '',
+            component: 'full',
+            id: m.id,
+            method: m.media_type === 'tv' ? 'tv' : 'movie',
+            card: m,
+            source: 'tmdb'
+        });
+    }
+
+    var HINT = '← → гортати · OK відкрити · ↑ пауза · Назад меню';
+
+    function controls(name, getSlider, onBack, onEnter) {
+        Lampa.Controller.add(name, {
+            toggle: function () { Lampa.Controller.clear(); },
+            left: function () { var s = getSlider(); if (s) s.show(s.index - 1); },
+            right: function () { var s = getSlider(); if (s) s.show(s.index + 1); },
+            up: function () { var s = getSlider(); if (s) s.togglePlay(); },
+            down: function () { var s = getSlider(); if (s) s.show(s.index + 5); },
+            enter: onEnter,
+            back: onBack
+        });
+    }
+
+    /* ---------- Повноекранний режим (з меню "Постери") ---------- */
+
+    var overlay = { root: null, slider: null, prev: null };
+
+    function closeOverlay(skipRestore) {
+        if (overlay.slider) overlay.slider.destroy();
+        if (overlay.root) overlay.root.remove();
+        overlay.root = overlay.slider = null;
+        if (!skipRestore) {
+            var prev = overlay.prev || 'content';
+            try { Lampa.Controller.toggle(prev); } catch (e) { Lampa.Controller.toggle('content'); }
         }
     }
 
-    function show(i) {
-        var n = state.items.length;
-        if (!n) return;
-        state.index = (i + n) % n;
-        var m = state.items[state.index];
-        var token = ++state.token;
-
-        state.content.css('opacity', 0);
-        state.bg.css('opacity', 0);
-
-        var posterSrc = imgUrl(POSTER_SIZE, m.poster_path);
-        var bgSrc = m.backdrop_path ? imgUrl(BACKDROP_SIZE, m.backdrop_path) : posterSrc;
-        var blur = !m.backdrop_path;
-
-        var ready = 0;
-        function apply() {
-            if (token !== state.token || !state.root) return;
-            if (++ready < 2) return;
-            state.bg.css({
-                'background-image': 'url(' + bgSrc + ')',
-                'filter': blur ? 'blur(25px) brightness(.6)' : 'none',
-                'opacity': 1
-            });
-            state.content.html(contentHtml(m)).css('opacity', 1);
-        }
-
-        var a = new Image(); a.onload = a.onerror = apply; a.src = posterSrc;
-        var b = new Image(); b.onload = b.onerror = apply; b.src = bgSrc;
-
-        state.counter.text((state.index + 1) + ' / ' + n);
-        preload(state.index + 1);
-        preload(state.index - 1);
-        restartTimer();
-    }
-
-    function flashHint(text) {
-        state.hint.text(text).css('opacity', 1);
-        clearTimeout(state.hintTimer);
-        state.hintTimer = setTimeout(function () {
-            if (state.hint) state.hint.css('opacity', 0);
-        }, 2000);
-    }
-
-    function restartTimer() {
-        clearInterval(state.timer);
-        if (state.playing) {
-            state.timer = setInterval(function () { show(state.index + 1); }, AUTOPLAY_MS);
-        }
-    }
-
-    function close() {
-        clearInterval(state.timer);
-        clearTimeout(state.hintTimer);
-        state.token++;
-        if (state.root) state.root.remove();
-        state.root = state.bg = state.content = state.counter = state.hint = null;
-        var prev = state.prevController || 'content';
-        try { Lampa.Controller.toggle(prev); } catch (e) { Lampa.Controller.toggle('content'); }
-    }
-
-    function open(period) {
-        lastError = '';
+    function openOverlay(period) {
         Lampa.Noty.show('Завантаження...');
 
-        var haveGenres = Object.keys(genres).length > 0;
-        function go() {
-            load(period, function (items) {
+        prepare(period, function (items) {
+            if (!items.length) {
+                Lampa.Noty.show('Не вдалося завантажити дані TMDB' + (lastError ? ' (' + lastError + ')' : '') + '. Спробуйте увімкнути проксі TMDB у налаштуваннях.');
+                return;
+            }
+
+            try { overlay.prev = Lampa.Controller.enabled().name; } catch (e) { overlay.prev = 'content'; }
+
+            overlay.root = $('<div class="tps-root"></div>');
+            $('body').append(overlay.root);
+
+            overlay.slider = createSlider(overlay.root, items, function (m) {
+                closeOverlay(true);
+                openFull(m);
+            });
+
+            controls('tmdb_posters',
+                function () { return overlay.slider; },
+                function () { closeOverlay(false); },
+                function () {
+                    var m = overlay.slider && overlay.slider.current();
+                    closeOverlay(true);
+                    openFull(m);
+                }
+            );
+            Lampa.Controller.toggle('tmdb_posters');
+
+            overlay.slider.show(0);
+            overlay.slider.flash(HINT);
+        });
+    }
+
+    /* ---------- Головна сторінка (компонент Lampa) ---------- */
+
+    function HomeComponent(object) {
+        var html = $('<div class="tps-root tps-inline"></div>');
+        var slider = null;
+        var self = this;
+
+        this.create = function () {
+            prepare(homePeriod(), function (items) {
                 if (!items.length) {
-                    Lampa.Noty.show('Не вдалося завантажити дані TMDB' + (lastError ? ' (' + lastError + ')' : '') + '. Спробуйте увімкнути проксі TMDB у налаштуваннях.');
+                    Lampa.Noty.show('Не вдалося завантажити головну' + (lastError ? ' (' + lastError + ')' : '') + ', відкриваю стандартну');
+                    try { self.activity.loader(false); } catch (e) {}
+                    Lampa.Activity.replace({ url: '', title: 'Головна', component: 'main', source: 'tmdb', page: 1, tps_skip: true });
                     return;
                 }
 
-                state.items = items;
-                state.index = 0;
-                state.playing = true;
+                slider = createSlider(html, items, openFull);
+                slider.show(0);
+                slider.flash(HINT);
 
-                try { state.prevController = Lampa.Controller.enabled().name; } catch (e) { state.prevController = 'content'; }
-
-                buildUI();
-
-                Lampa.Controller.add('tmdb_posters', {
-                    toggle: function () {
-                        Lampa.Controller.clear();
-                    },
-                    left: function () { show(state.index - 1); },
-                    right: function () { show(state.index + 1); },
-                    up: function () { show(state.index - 5); },
-                    down: function () { show(state.index + 5); },
-                    enter: function () {
-                        state.playing = !state.playing;
-                        restartTimer();
-                        flashHint(state.playing ? 'Автопоказ: увімкнено' : 'Пауза');
-                    },
-                    back: close
-                });
-                Lampa.Controller.toggle('tmdb_posters');
-
-                show(0);
-                flashHint('← → гортати · ОК пауза · Назад вихід');
+                self.activity.loader(false);
+                self.activity.toggle();
             });
-        }
+        };
 
-        if (haveGenres) go(); else loadGenres(go);
+        this.start = function () {
+            controls('tps_home',
+                function () { return slider; },
+                function () { Lampa.Controller.toggle('menu'); },
+                function () { if (slider) openFull(slider.current()); }
+            );
+            Lampa.Controller.toggle('tps_home');
+            if (slider) slider.resume();
+        };
+
+        this.pause = function () { if (slider) slider.pause(); };
+        this.stop = function () { if (slider) slider.pause(); };
+        this.render = function () { return html; };
+        this.destroy = function () {
+            if (slider) slider.destroy();
+            html.remove();
+        };
     }
+
+    function hookMainPage() {
+        if (Lampa.Activity.__tps_hooked) return;
+        Lampa.Activity.__tps_hooked = true;
+
+        var origPush = Lampa.Activity.push;
+        Lampa.Activity.push = function (params) {
+            try {
+                if (params && params.component === 'main' && !params.tps_skip && homeEnabled() &&
+                    (!params.source || params.source === 'tmdb')) {
+                    params = $.extend({}, params, { component: 'tps_home', page: 1 });
+                }
+            } catch (e) {}
+            return origPush.call(Lampa.Activity, params);
+        };
+    }
+
+    /* ---------- Меню ---------- */
 
     function chooseSource() {
         Lampa.Select.show({
             title: 'TMDB тренди',
             items: [
-                { title: 'Тренди сьогодні', period: 'day' },
-                { title: 'Тренди цього тижня', period: 'week' }
+                { title: 'Тренди сьогодні (повний екран)', action: 'day' },
+                { title: 'Тренди цього тижня (повний екран)', action: 'week' },
+                { title: 'Замінювати головну: ' + (homeEnabled() ? 'так' : 'ні'), action: 'toggle_home' },
+                { title: 'Головна показує: ' + (homePeriod() === 'week' ? 'тренди тижня' : 'тренди сьогодні'), action: 'toggle_period' }
             ],
             onSelect: function (a) {
-                open(a.period);
+                if (a.action === 'day' || a.action === 'week') {
+                    openOverlay(a.action);
+                } else if (a.action === 'toggle_home') {
+                    Lampa.Storage.set('tps_home', homeEnabled() ? 'false' : 'true');
+                    Lampa.Noty.show('Головна: ' + (homeEnabled() ? 'слайд-шоу' : 'стандартна') + ' (набуде чинності при наступному відкритті)');
+                    Lampa.Controller.toggle('menu');
+                } else if (a.action === 'toggle_period') {
+                    Lampa.Storage.set('tps_period', homePeriod() === 'week' ? 'day' : 'week');
+                    Lampa.Noty.show('Головна показує: ' + (homePeriod() === 'week' ? 'тренди тижня' : 'тренди сьогодні'));
+                    Lampa.Controller.toggle('menu');
+                }
             },
             onBack: function () {
                 Lampa.Controller.toggle('menu');
@@ -280,6 +401,7 @@
         $('head').append(
             '<style id="tps-style">' +
             '.tps-root{position:fixed;left:0;top:0;right:0;bottom:0;z-index:99999;background:#0b1d2a;overflow:hidden;color:#fff;}' +
+            '.tps-root.tps-inline{z-index:1;}' +
             '.tps-bg{position:absolute;left:0;top:0;right:0;bottom:0;background-size:cover;background-position:center;' +
                 'transform:scale(1.1);opacity:0;transition:opacity .5s ease;}' +
             '.tps-shade{position:absolute;left:0;top:0;right:0;bottom:0;' +
@@ -287,7 +409,7 @@
             '.tps-content{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;' +
                 'padding:3em 5%;opacity:0;transition:opacity .4s ease;box-sizing:border-box;}' +
             '.tps-poster{flex:0 0 auto;height:100%;max-height:34em;aspect-ratio:2/3;border-radius:.8em;overflow:hidden;' +
-                'box-shadow:0 .5em 2em rgba(0,0,0,.6);}' +
+                'box-shadow:0 .5em 2em rgba(0,0,0,.6);cursor:pointer;}' +
             '.tps-poster img{display:block;height:100%;width:auto;max-width:100%;}' +
             '.tps-info{flex:1 1 auto;min-width:0;margin-left:3em;}' +
             '.tps-title{font-size:2.6em;font-weight:700;line-height:1.15;}' +
@@ -304,7 +426,7 @@
             '.tps-counter{position:absolute;right:1.5em;bottom:1em;color:rgba(255,255,255,.55);font-size:1.2em;}' +
             '.tps-hint{position:absolute;left:50%;top:1.2em;transform:translateX(-50%);' +
                 'background:rgba(0,0,0,.65);color:#fff;padding:.5em 1em;border-radius:.5em;' +
-                'font-size:1.2em;opacity:0;transition:opacity .4s ease;}' +
+                'font-size:1.2em;opacity:0;transition:opacity .4s ease;white-space:nowrap;}' +
             '</style>'
         );
     }
@@ -331,8 +453,19 @@
 
     function init() {
         addStyles();
+        Lampa.Component.add('tps_home', HomeComponent);
+        hookMainPage();
         addMenuButton();
     }
+
+    // Перехоплення головної ставимо одразу (до готовності застосунку),
+    // щоб підхопити і стартову сторінку
+    try {
+        if (window.Lampa && Lampa.Component && Lampa.Activity) {
+            Lampa.Component.add('tps_home', HomeComponent);
+            hookMainPage();
+        }
+    } catch (e) {}
 
     if (window.appready) init();
     else {
