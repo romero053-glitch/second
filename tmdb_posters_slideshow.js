@@ -109,6 +109,49 @@
         return '#db2360';
     }
 
+    /* ---------- Логотипи фільмів ---------- */
+
+    var LOGO_LANGS = ['uk', 'en']; // мови логотипів за пріоритетом; додайте 'en', щоб показувати англійські, якщо українського немає
+    var logoCache = {};
+
+    function pickLogo(list) {
+        for (var i = 0; i < LOGO_LANGS.length; i++) {
+            var lg = LOGO_LANGS[i];
+            var found = list.filter(function (l) { return l.iso_639_1 === lg; });
+            if (found.length) {
+                found.sort(function (a, b) { return (b.vote_average || 0) - (a.vote_average || 0); });
+                return found[0];
+            }
+        }
+        return null;
+    }
+
+    function loadLogo(m, cb) {
+        var type = m.media_type === 'tv' ? 'tv' : 'movie';
+        var key = type + m.id;
+        if (key in logoCache) { cb(logoCache[key]); return; }
+        apiGet(type + '/' + m.id + '/images?include_image_language=' + LOGO_LANGS.join(',') + ',null', function (json) {
+            var url = null;
+            if (json && json.logos && json.logos.length) {
+                var p = pickLogo(json.logos);
+                if (p) url = imgUrl(/\.svg$/i.test(p.file_path) ? 'original' : 'w500', p.file_path);
+            }
+            logoCache[key] = url;
+            cb(url);
+        });
+    }
+
+    function metaText(m, withYear) {
+        var date = m.release_date || m.first_air_date || '';
+        var year = date ? date.slice(0, 4) : '';
+        var parts = [];
+        if (withYear && year) parts.push(year);
+        parts.push(m.media_type === 'tv' ? 'Серіал' : 'Фільм');
+        var gl = (m.genre_ids || []).map(function (id) { return genres[id]; }).filter(Boolean).join(', ');
+        if (gl) parts.push(gl);
+        return parts.join(' • ');
+    }
+
     function contentHtml(m) {
         var title = m.title || m.name || '';
         var date = m.release_date || m.first_air_date || '';
@@ -190,6 +233,19 @@
                     'opacity': 1
                 });
                 content.html(contentHtml(m)).css('opacity', 1);
+
+                // замінюємо текстову назву на логотип, коли він завантажиться
+                loadLogo(m, function (url) {
+                    if (!url || token !== s.token || s.dead) return;
+                    var li = new Image();
+                    li.onload = function () {
+                        if (token !== s.token || s.dead) return;
+                        content.find('.tps-title').addClass('tps-title-logo')
+                            .html('<img class="tps-logo" src="' + url + '" />');
+                        content.find('.tps-meta').text(metaText(m, true));
+                    };
+                    li.src = url;
+                });
             }
 
             var a = new Image(); a.onload = a.onerror = apply; a.src = posterSrc;
@@ -197,6 +253,7 @@
 
             counter.text((s.index + 1) + ' / ' + n());
             preload(items[(s.index + 1) % n()]);
+            loadLogo(items[(s.index + 1) % n()], function () {});
             preload(items[(s.index - 1 + n()) % n()]);
             restart();
         };
@@ -350,7 +407,28 @@
         };
     }
 
+    function isTmdbMain(object) {
+        return !object || !object.source || object.source === 'tmdb';
+    }
+
     function hookMainPage() {
+        // 1) підміна самого компонента "main" (спрацьовує на будь-який спосіб відкриття головної)
+        try {
+            if (!Lampa.__tps_comp_hooked && Lampa.Component && Lampa.Component.get) {
+                var origMain = Lampa.Component.get('main');
+                if (origMain) {
+                    Lampa.__tps_comp_hooked = true;
+                    Lampa.Component.add('main', function (object) {
+                        if (homeEnabled() && !(object && object.tps_skip) && isTmdbMain(object)) {
+                            return new HomeComponent(object);
+                        }
+                        return new origMain(object);
+                    });
+                }
+            }
+        } catch (e) { console.log('TMDB posters: не вдалося підмінити main', e); }
+
+        // 2) запасний варіант: перехоплення Activity.push
         if (Lampa.Activity.__tps_hooked) return;
         Lampa.Activity.__tps_hooked = true;
 
@@ -414,6 +492,8 @@
             '.tps-info{flex:1 1 auto;min-width:0;margin-left:3em;}' +
             '.tps-title{font-size:2.6em;font-weight:700;line-height:1.15;}' +
             '.tps-year{font-weight:400;opacity:.7;}' +
+            '.tps-logo{display:block;max-width:100%;max-height:7em;object-fit:contain;object-position:left center;' +
+                'filter:drop-shadow(0 0 .4em rgba(0,0,0,.5));}' +
             '.tps-meta{margin-top:.5em;font-size:1.3em;opacity:.8;}' +
             '.tps-rate{display:flex;align-items:center;margin-top:1.2em;}' +
             '.tps-circle{width:3.2em;height:3.2em;border:.22em solid #21d07a;border-radius:50%;background:#081c22;' +
