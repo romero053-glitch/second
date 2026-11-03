@@ -4,7 +4,7 @@
     if (window.plugin_tmdb_full_page) return;
     window.plugin_tmdb_full_page = true;
 
-    var TMDB_API_KEY = 'ВСТАВТЕ_СВІЙ_КЛЮЧ_TMDB_V3'; // той самий ключ, що й у плагіні слайд-шоу
+    var TMDB_API_KEY = '2556f3c34d07b68f8eb2746f95d200cd'; // той самий ключ, що й у плагіні слайд-шоу
     var LOGO_LANGS = ['uk', 'en']; // мови логотипів за пріоритетом
     var CERT_COUNTRIES = ['UA', 'US'];
 
