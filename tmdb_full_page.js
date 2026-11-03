@@ -193,8 +193,14 @@
         // показуємо фон лише коли на екрані видно сторінку фільму
         setInterval(function () {
             var vis = $('.tps-fs:visible').last();
-            if (!vis.length) { bgEl.css('display', 'none'); syncVideo(''); return; }
+            if (!vis.length) {
+                bgEl.css('display', 'none');
+                $('body').removeClass('tps-on');
+                syncVideo('');
+                return;
+            }
             bgEl.css('display', 'block');
+            $('body').addClass('tps-on');
             syncVideo(TRAILER_BG && !playerOpened() ? (vis.data('tps-trailer') || '') : '');
             var url = vis.data('tps-bg') || '';
             var img = bgEl.find('.tps-full-bg-img');
@@ -304,6 +310,9 @@
             '.tps-full-bg-shade{position:absolute;left:0;top:0;right:0;bottom:0;' +
                 'background:linear-gradient(to top,rgba(10,14,20,.98) 0%,rgba(10,14,20,.85) 30%,rgba(10,14,20,.2) 62%,rgba(10,14,20,.4) 100%);}' +
             '.tps-hide{display:none!important;}' +
+            // прибираємо власний розмитий фон Lampa та заливки контенту, щоб було видно наш кадр і трейлер
+            'body.tps-on .background{display:none!important;}' +
+            'body.tps-on .wrap__content,body.tps-on .activity,body.tps-on .activity__body{background:transparent!important;}' +
 
             '.tps-fs{display:flex!important;align-items:flex-end;min-height:88vh;background:none!important;}' +
             '.tps-fs .full-start-new__left,.tps-fs .full-start__left{display:none!important;}' +
