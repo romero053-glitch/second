@@ -7,6 +7,8 @@
     var TMDB_API_KEY = '2556f3c34d07b68f8eb2746f95d200cd'; // той самий ключ, що й у плагіні слайд-шоу
     var LOGO_LANGS = ['uk', 'en']; // мови логотипів за пріоритетом
     var CERT_COUNTRIES = ['UA', 'US'];
+    var TRAILER_BG = true;       // відтворювати трейлер на фоні (YouTube, без звуку)
+    var TRAILER_DELAY = 3500;    // скільки мс показувати кадр, перш ніж увімкнути відео
 
     /* ---------- TMDB ---------- */
 
@@ -41,9 +43,10 @@
     function loadDetails(type, id, cb) {
         var key = type + id;
         if (cache[key]) { cb(cache[key]); return; }
-        var append = type === 'tv' ? 'images,content_ratings' : 'images,release_dates';
+        var append = type === 'tv' ? 'images,content_ratings,videos' : 'images,release_dates,videos';
         apiGet(type + '/' + id + '?language=' + lang() + '&append_to_response=' + append +
-            '&include_image_language=' + LOGO_LANGS.join(',') + ',null', function (json) {
+            '&include_image_language=' + LOGO_LANGS.join(',') + ',null' +
+            '&include_video_language=uk,en,null', function (json) {
             if (json) cache[key] = json;
             cb(json);
         });
@@ -74,6 +77,22 @@
             }
         }
         return null;
+    }
+
+    function pickTrailer(details) {
+        var list = (details && details.videos && details.videos.results) || [];
+        list = list.filter(function (v) { return v.site === 'YouTube' && v.key; });
+        if (!list.length) return '';
+
+        var best = null, bestScore = -1;
+        list.forEach(function (v) {
+            var score = 0;
+            if (v.type === 'Trailer') score += 100; else if (v.type === 'Teaser') score += 40; else return;
+            if (v.iso_639_1 === 'uk') score += 30; else if (v.iso_639_1 === 'en') score += 20;
+            if (v.official) score += 10;
+            if (score > bestScore) { best = v; bestScore = score; }
+        });
+        return best ? best.key : '';
     }
 
     function pickCert(details, type) {
@@ -130,17 +149,47 @@
     /* ---------- Фон на всю сторінку ---------- */
 
     var bgEl = null;
+    var videoKey = '';
+    var videoTimer = null;
+
+    function playerOpened() {
+        try { return !!(Lampa.Player && Lampa.Player.opened && Lampa.Player.opened()); } catch (e) { return false; }
+    }
+
+    // створює або прибирає iframe з трейлером на фоні
+    function syncVideo(key) {
+        if (videoKey === key) return;
+        videoKey = key;
+        clearTimeout(videoTimer);
+
+        var wrap = bgEl.find('.tps-full-bg-video');
+        wrap.css('opacity', 0).empty();
+        if (!key) return;
+
+        videoTimer = setTimeout(function () {
+            if (videoKey !== key) return;
+            var src = 'https://www.youtube.com/embed/' + key +
+                '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + key +
+                '&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1&fs=0';
+            wrap.append('<iframe frameborder="0" allow="autoplay; encrypted-media" src="' + src + '"></iframe>');
+            setTimeout(function () {
+                if (videoKey === key) wrap.css('opacity', 1);
+            }, TRAILER_DELAY);
+        }, 1200);
+    }
 
     function ensureBg() {
         if (bgEl) return;
-        bgEl = $('<div class="tps-full-bg"><div class="tps-full-bg-img"></div><div class="tps-full-bg-shade"></div></div>');
+        bgEl = $('<div class="tps-full-bg"><div class="tps-full-bg-img"></div>' +
+                 '<div class="tps-full-bg-video"></div><div class="tps-full-bg-shade"></div></div>');
         $('body').append(bgEl);
 
         // показуємо фон лише коли на екрані видно сторінку фільму
         setInterval(function () {
             var vis = $('.tps-fs:visible').last();
-            if (!vis.length) { bgEl.css('display', 'none'); return; }
+            if (!vis.length) { bgEl.css('display', 'none'); syncVideo(''); return; }
             bgEl.css('display', 'block');
+            syncVideo(TRAILER_BG && !playerOpened() ? (vis.data('tps-trailer') || '') : '');
             var url = vis.data('tps-bg') || '';
             var img = bgEl.find('.tps-full-bg-img');
             if (img.data('url') !== url) {
@@ -211,6 +260,7 @@
             if (!details || !head.closest('body').length && !head.parent().length) return;
 
             head.find('.tps-meta').html(metaHtml(movie, type, details));
+            roots.first().data('tps-trailer', pickTrailer(details));
 
             var logo = pickLogo(details);
             if (logo) {
@@ -242,6 +292,9 @@
             '.tps-full-bg{position:fixed;left:0;top:0;right:0;bottom:0;z-index:-1;display:none;background:#0a0e14;}' +
             '.tps-full-bg-img{position:absolute;left:0;top:0;right:0;bottom:0;background-size:cover;background-position:center top;' +
                 'opacity:0;transition:opacity .5s ease;}' +
+            '.tps-full-bg-video{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;opacity:0;transition:opacity 1s ease;}' +
+            '.tps-full-bg-video iframe{position:absolute;left:50%;top:50%;width:100vw;height:56.25vw;' +
+                'min-height:100vh;min-width:177.78vh;transform:translate(-50%,-50%);border:0;pointer-events:none;}' +
             '.tps-full-bg-shade{position:absolute;left:0;top:0;right:0;bottom:0;' +
                 'background:linear-gradient(to top,rgba(10,14,20,.98) 0%,rgba(10,14,20,.85) 30%,rgba(10,14,20,.2) 62%,rgba(10,14,20,.4) 100%);}' +
             '.tps-hide{display:none!important;}' +
