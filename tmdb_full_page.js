@@ -217,6 +217,46 @@
         }, 400);
     }
 
+    /* ---------- Розмір тексту ---------- */
+
+    var SCALES = [
+        { title: 'Дрібний', value: 0.8 },
+        { title: 'Звичайний', value: 1 },
+        { title: 'Великий', value: 1.25 },
+        { title: 'Дуже великий', value: 1.5 },
+        { title: 'Величезний', value: 1.8 }
+    ];
+
+    function currentScale() {
+        var v = parseFloat(Lampa.Storage.get('tps_scale', 1));
+        return v > 0 ? v : 1;
+    }
+
+    function applyScale() {
+        document.documentElement.style.setProperty('--tps-scale', currentScale());
+    }
+
+    function openFontMenu() {
+        var prev = 'full_start';
+        try { prev = Lampa.Controller.enabled().name || prev; } catch (e) {}
+        var cur = currentScale();
+
+        Lampa.Select.show({
+            title: 'Розмір тексту',
+            items: SCALES.map(function (s) {
+                return { title: s.title, value: s.value, selected: s.value === cur };
+            }),
+            onSelect: function (a) {
+                Lampa.Storage.set('tps_scale', a.value);
+                applyScale();
+                Lampa.Controller.toggle(prev);
+            },
+            onBack: function () {
+                Lampa.Controller.toggle(prev);
+            }
+        });
+    }
+
     /* ---------- Основна логіка ---------- */
 
     function apply(e) {
@@ -260,6 +300,11 @@
         if (buttons.length) {
             head.insertBefore(buttons);
             foot.insertAfter(buttons);
+
+            // кнопка "Aa" для зміни розміру тексту
+            var fontBtn = $('<div class="full-start__button selector tps-font-btn"><span>Aa</span></div>');
+            fontBtn.on('hover:enter', openFontMenu);
+            buttons.append(fontBtn);
         } else {
             var right = find(render, '.full-start-new__right, .full-start__right').first();
             if (!right.length) right = roots.first();
@@ -335,10 +380,11 @@
             '.tps-cert{border:.1em solid rgba(255,255,255,.7);border-radius:.25em;padding:0 .35em;font-size:.8em;font-weight:700;}' +
             '.tps-star b{color:#3ec6e0;}' +
 
-            '.tps-foot{width:100%;margin-top:1.2em;text-align:left;}' +
+            '.tps-head,.tps-foot{font-size:calc(1em * var(--tps-scale,1));}' +
+            '.tps-foot{width:100%;margin-top:1.2em;text-align:center;}' +
             '.tps-tagline{font-size:1.5em;font-style:italic;}' +
-            '.tps-overview{margin-top:.4em;font-size:1.2em;line-height:1.45;opacity:.8;max-width:70em;}' +
-            '.tps-chip{display:inline-block;margin:.8em .5em 0 0;padding:.2em .7em;border-radius:.3em;' +
+            '.tps-overview{margin:.4em auto 0;font-size:1.2em;line-height:1.45;opacity:.85;max-width:70em;}' +
+            '.tps-chip{display:inline-block;margin:.8em .3em 0;padding:.2em .7em;border-radius:.3em;' +
                 'background:rgba(255,255,255,.14);font-size:1.05em;font-weight:700;}' +
             '</style>'
         );
@@ -346,6 +392,7 @@
 
     function init() {
         addStyles();
+        applyScale();
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite') {
                 try { apply(e); } catch (err) { console.log('TMDB full page:', err); }
