@@ -8,7 +8,7 @@
     var LOGO_LANGS = ['uk', 'en']; // мови логотипів за пріоритетом
     var CERT_COUNTRIES = ['UA', 'US'];
     var TRAILER_BG = true;       // відтворювати трейлер на фоні (YouTube, без звуку)
-    var EMBED_HOST = 'www.youtube.com'; // якщо помилка лишається, спробуйте 'www.youtube-nocookie.com'
+    var EMBED_HOST = 'www.youtube-nocookie.com'; // якщо помилка лишається, спробуйте 'www.youtube-nocookie.com'
     var TRAILER_DELAY = 3500;    // скільки мс показувати кадр, перш ніж увімкнути відео
 
     /* ---------- TMDB ---------- */
