@@ -8,6 +8,7 @@
     var LOGO_LANGS = ['uk', 'en']; // мови логотипів за пріоритетом
     var CERT_COUNTRIES = ['UA', 'US'];
     var TRAILER_BG = true;       // відтворювати трейлер на фоні (YouTube, без звуку)
+    var EMBED_HOST = 'www.youtube.com'; // якщо помилка лишається, спробуйте 'www.youtube-nocookie.com'
     var TRAILER_DELAY = 3500;    // скільки мс показувати кадр, перш ніж увімкнути відео
 
     /* ---------- TMDB ---------- */
@@ -168,10 +169,15 @@
 
         videoTimer = setTimeout(function () {
             if (videoKey !== key) return;
-            var src = 'https://www.youtube.com/embed/' + key +
+            var origin = '';
+            try { origin = encodeURIComponent(location.origin); } catch (e) {}
+            var src = 'https://' + EMBED_HOST + '/embed/' + key +
                 '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + key +
-                '&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1&fs=0';
-            wrap.append('<iframe frameborder="0" allow="autoplay; encrypted-media" src="' + src + '"></iframe>');
+                '&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1&fs=0' +
+                '&enablejsapi=1' + (origin ? '&origin=' + origin : '');
+            // referrerpolicy потрібен, інакше YouTube віддає помилку 153 (немає Referer)
+            wrap.append('<iframe frameborder="0" referrerpolicy="strict-origin-when-cross-origin" ' +
+                'allow="autoplay; encrypted-media; picture-in-picture" src="' + src + '"></iframe>');
             setTimeout(function () {
                 if (videoKey === key) wrap.css('opacity', 1);
             }, TRAILER_DELAY);
