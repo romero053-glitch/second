@@ -219,13 +219,13 @@
 
         Lampa.SettingsApi.addParam({
             component: 'toloka',
-            param: { name: 'toloka_rss', type: 'input', default: DEFAULT_RSS },
+            param: { name: 'toloka_rss', type: 'input', values: '', default: DEFAULT_RSS },
             field: { name: 'RSS-посилання', description: 'Посилання на RSS Toloka' }
         });
 
         Lampa.SettingsApi.addParam({
             component: 'toloka',
-            param: { name: 'toloka_cookie', type: 'input', default: '' },
+            param: { name: 'toloka_cookie', type: 'input', values: '', default: '' },
             field: {
                 name: 'Cookie',
                 description: 'Cookie авторизованої сесії, напр. toloka_sid=...; toloka_data=... (з DevTools браузера після входу на toloka.to)'
@@ -234,7 +234,7 @@
 
         Lampa.SettingsApi.addParam({
             component: 'toloka',
-            param: { name: 'toloka_proxy', type: 'input', default: '' },
+            param: { name: 'toloka_proxy', type: 'input', values: '', default: '' },
             field: {
                 name: 'Проксі (необов\'язково)',
                 description: 'Префікс проксі або шаблон з {url}. Потрібен у браузері, де заборонено відправку Cookie'
@@ -243,7 +243,7 @@
 
         Lampa.SettingsApi.addParam({
             component: 'toloka',
-            param: { name: 'toloka_clear', type: 'static', default: '' },
+            param: { name: 'toloka_clear', type: 'button' },
             field: { name: 'Очистити кеш', description: 'Натисніть, щоб оновити список' },
             onChange: function () {
                 Lampa.Storage.set(CACHE_KEY, '{}');
