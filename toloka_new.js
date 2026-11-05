@@ -3,7 +3,6 @@
  * Показує нові роздачі з RSS Toloka.to у вигляді карток (постери з TMDB).
  *
  * Налаштування: Налаштування → Toloka
- *   - RSS-посилання (за замовчуванням уже вказане)
  *   - Cookie (потрібна авторизація на сайті)
  *   - Проксі (потрібен у браузері/на ТВ без native-запитів)
  */
@@ -13,7 +12,7 @@
     if (window.toloka_new_plugin) return;
     window.toloka_new_plugin = true;
 
-    var DEFAULT_RSS = 'https://toloka.to/rss.php?t=1&c=12&f=96&toronly=1&lite=1&thumbs=1';
+    var RSS_URL = 'https://toloka.to/rss.php?t=1&c=12&f=96&toronly=1&lite=1&thumbs=1';
     var CACHE_KEY = 'toloka_new_cache';
     var CACHE_MINUTES = 15;
 
@@ -36,12 +35,11 @@
 
     function fetchRss() {
         return new Promise(function (resolve, reject) {
-            var rss = trim(S('toloka_rss', '')) || DEFAULT_RSS;
             var cookie = trim(S('toloka_cookie', ''));
             var proxy = trim(S('toloka_proxy', ''));
             var net = new Lampa.Reguest();
             var headers = cookie ? { 'Cookie': cookie } : {};
-            var target = buildUrl(rss);
+            var target = buildUrl(RSS_URL);
 
             var ok = function (text) { resolve(typeof text === 'string' ? text : String(text)); };
             var fail = function (e) { reject(e || new Error('network')); };
@@ -210,6 +208,28 @@
 
     /* ---------- Налаштування та пункт меню ---------- */
 
+    // Поле вводу через кнопку + Lampa.Input (без type: 'input')
+    function addTextSetting(storageKey, title, description) {
+        Lampa.SettingsApi.addParam({
+            component: 'toloka',
+            param: { name: storageKey + '_btn', type: 'button' },
+            field: { name: title, description: description },
+            onChange: function () {
+                Lampa.Input.edit({
+                    free: true,
+                    title: title,
+                    nosave: true,
+                    value: S(storageKey, '') || ''
+                }, function (val) {
+                    Lampa.Storage.set(storageKey, trim(val));
+                    Lampa.Storage.set(CACHE_KEY, '{}');
+                    Lampa.Noty.show(title + ': збережено');
+                    try { Lampa.Controller.toggle('settings_component'); } catch (e) {}
+                });
+            }
+        });
+    }
+
     function addSettings() {
         Lampa.SettingsApi.addComponent({
             component: 'toloka',
@@ -217,29 +237,17 @@
             icon: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>'
         });
 
-        Lampa.SettingsApi.addParam({
-            component: 'toloka',
-            param: { name: 'toloka_rss', type: 'input', values: '', default: DEFAULT_RSS },
-            field: { name: 'RSS-посилання', description: 'Посилання на RSS Toloka' }
-        });
+        addTextSetting(
+            'toloka_cookie',
+            'Cookie',
+            'Cookie авторизованої сесії, напр. toloka_sid=...; toloka_data=... (з DevTools браузера після входу на toloka.to)'
+        );
 
-        Lampa.SettingsApi.addParam({
-            component: 'toloka',
-            param: { name: 'toloka_cookie', type: 'input', values: '', default: '' },
-            field: {
-                name: 'Cookie',
-                description: 'Cookie авторизованої сесії, напр. toloka_sid=...; toloka_data=... (з DevTools браузера після входу на toloka.to)'
-            }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: 'toloka',
-            param: { name: 'toloka_proxy', type: 'input', values: '', default: '' },
-            field: {
-                name: 'Проксі (необов\'язково)',
-                description: 'Префікс проксі або шаблон з {url}. Потрібен у браузері, де заборонено відправку Cookie'
-            }
-        });
+        addTextSetting(
+            'toloka_proxy',
+            'Проксі',
+            'Необов\'язково. Префікс проксі або шаблон з {url}. Потрібен у браузері, де заборонено відправку Cookie'
+        );
 
         Lampa.SettingsApi.addParam({
             component: 'toloka',
