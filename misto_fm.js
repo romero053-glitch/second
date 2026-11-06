@@ -1,6 +1,6 @@
 /*
  * Misto FM — радіо-плагін для Lampa (AzuraCast: stream.mistofm.com)
- * Налаштування: Налаштування → Misto FM
+ * Кнопка на верхній панелі, перемикання станцій пультом.
  */
 (function () {
     'use strict';
@@ -13,6 +13,13 @@
     var DEFAULT_COVER = 'https://mistofm.com/assets/img/seo/deep/1200x1200.jpg';
     var POLL_MS = 15000;
 
+    // запасний список, якщо API станцій недоступний
+    var stations = [
+        { slug: 'misto_fm_deep', name: 'Deep', url: '' },
+        { slug: 'misto_fm_juda', name: 'Juda', url: '' },
+        { slug: 'misto_fm_beats', name: 'Beats', url: '' }
+    ];
+
     var audio = null;
     var state = { playing: false, loading: false, title: '', artist: '', art: '', listenUrl: '' };
     var listeners = [];
@@ -23,6 +30,11 @@
     function S(key, def) { return Lampa.Storage.get(key, def); }
     function trim(s) { return (s || '').replace(/^\s+|\s+$/g, ''); }
     function slug() { return trim(S('misto_slug', '')) || DEFAULT_SLUG; }
+
+    function stationName(sl) {
+        var st = stations.filter(function (s) { return s.slug === sl; })[0];
+        return st ? st.name : sl;
+    }
 
     function notify() {
         listeners.forEach(function (fn) { try { fn(); } catch (e) {} });
@@ -36,14 +48,35 @@
         };
     }
 
-    /* ---------- Дані зі станції (AzuraCast API) ---------- */
-
     function fixUrl(u) {
         return (u || '').replace(/^http:\/\/stream\.mistofm\.com/, 'https://stream.mistofm.com');
     }
 
+    /* ---------- Дані зі станції (AzuraCast API) ---------- */
+
+    function loadStations(cb) {
+        new Lampa.Reguest().silent(API_BASE + '/api/stations', function (j) {
+            var changed = false;
+            try {
+                if (j && j.length) {
+                    var list = j.filter(function (s) { return s && s.shortcode; }).map(function (s) {
+                        return {
+                            slug: s.shortcode,
+                            name: (s.name || s.shortcode).replace(/^Misto FM\s*/i, '') || s.shortcode,
+                            url: fixUrl(s.listen_url || '')
+                        };
+                    });
+                    if (list.length) { stations = list; changed = true; }
+                }
+            } catch (e) {}
+            cb(changed);
+        }, function () { cb(false); });
+    }
+
     function refreshNow() {
-        new Lampa.Reguest().silent(API_BASE + '/api/nowplaying/' + slug(), function (j) {
+        var requested = slug();
+        new Lampa.Reguest().silent(API_BASE + '/api/nowplaying/' + requested, function (j) {
+            if (requested !== slug()) return; // станцію вже змінили
             try {
                 var song = j && j.now_playing && j.now_playing.song;
                 if (song) {
@@ -74,8 +107,8 @@
     /* ---------- Відтворення ---------- */
 
     function streamUrl() {
-        return trim(S('misto_stream', '')) ||
-            state.listenUrl ||
+        return state.listenUrl ||
+            trim(S('misto_stream', '')) ||
             (API_BASE + '/listen/' + slug() + '/radio.mp3');
     }
 
@@ -95,7 +128,7 @@
             state.loading = true; notify();
         });
         audio.addEventListener('error', function () {
-            if (stopping) return;
+            if (stopping || !audio.getAttribute('src')) return;
             state.playing = false; state.loading = false; ensurePoll(); notify();
             Lampa.Noty.show('Misto FM: не вдалося відтворити потік');
         });
@@ -108,7 +141,6 @@
         stopping = false;
         state.loading = true;
         notify();
-        // додаємо мітку часу, щоб отримати "живий" потік, а не кеш
         a.src = url + (url.indexOf('?') > -1 ? '&' : '?') + 't=' + Date.now();
         var p = a.play();
         if (p && p.catch) {
@@ -137,6 +169,23 @@
         else startAudio();
     }
 
+    function setStation(newSlug) {
+        if (newSlug === slug() && (state.playing || state.loading)) return;
+
+        Lampa.Storage.set('misto_slug', newSlug);
+        var st = stations.filter(function (s) { return s.slug === newSlug; })[0];
+
+        state.title = '';
+        state.artist = '';
+        state.art = '';
+        state.listenUrl = (st && st.url) || '';
+
+        if (audio) stopAudio();
+        notify();
+        refreshNow();
+        startAudio();
+    }
+
     function changeVolume(delta) {
         var a = getAudio();
         a.volume = Math.max(0, Math.min(1, Math.round((a.volume + delta) * 10) / 10));
@@ -149,14 +198,20 @@
         if ($('#misto-radio-style').length) return;
         $('<style id="misto-radio-style">' +
             '.misto-radio{display:flex;align-items:center;justify-content:center;height:100%;padding:2em;text-align:center}' +
-            '.misto-radio__art{width:18em;height:18em;object-fit:cover;border-radius:1.2em;background:rgba(255,255,255,.08);margin-bottom:1.2em}' +
+            '.misto-radio__stations{display:flex;justify-content:center;flex-wrap:wrap;gap:.8em;margin-bottom:1.4em}' +
+            '.misto-radio__chip{padding:.5em 1.2em;border-radius:2em;background:rgba(255,255,255,.1);font-size:1.1em}' +
+            '.misto-radio__chip--active{background:rgba(255,255,255,.35);font-weight:600}' +
+            '.misto-radio__art{width:16em;height:16em;object-fit:cover;border-radius:1.2em;background:rgba(255,255,255,.08);margin-bottom:1.2em}' +
             '.misto-radio__station{font-size:1em;opacity:.6;letter-spacing:.15em;text-transform:uppercase;margin-bottom:.6em}' +
             '.misto-radio__title{font-size:1.8em;font-weight:600;max-width:20em;margin:0 auto}' +
             '.misto-radio__artist{font-size:1.2em;opacity:.7;margin-top:.3em;min-height:1.4em}' +
-            '.misto-radio__buttons{display:flex;justify-content:center;align-items:center;gap:1em;margin-top:1.6em}' +
+            '.misto-radio__buttons{display:flex;justify-content:center;align-items:center;gap:1em;margin-top:1.4em}' +
             '.misto-radio__btn{padding:.8em 1.6em;border-radius:.8em;background:rgba(255,255,255,.1);font-size:1.2em}' +
             '.misto-radio__btn--main{min-width:9em}' +
-            '.misto-radio__btn.focus{background:#fff;color:#000}' +
+            '.misto-radio__chip.focus,.misto-radio__btn.focus{background:#fff;color:#000}' +
+            '.misto-head svg{width:1.7em;height:1.7em}' +
+            '.misto-head{opacity:.75}' +
+            '.misto-head.misto-head--on{opacity:1;color:#4cd964}' +
         '</style>').appendTo('head');
     }
 
@@ -166,6 +221,7 @@
 
         var html = $(
             '<div class="misto-radio"><div>' +
+                '<div class="misto-radio__stations"></div>' +
                 '<img class="misto-radio__art" src="">' +
                 '<div class="misto-radio__station">Misto FM</div>' +
                 '<div class="misto-radio__title"></div>' +
@@ -178,36 +234,67 @@
             '</div></div>'
         );
 
+        function bindFocus(el) {
+            el.on('hover:focus', function () { lastFocus = this; });
+        }
+
+        function renderStations() {
+            var box = html.find('.misto-radio__stations').empty();
+            stations.forEach(function (st) {
+                var chip = $('<div class="misto-radio__chip selector"></div>')
+                    .text(st.name)
+                    .attr('data-slug', st.slug);
+                chip.on('hover:enter', function () { setStation(st.slug); });
+                bindFocus(chip);
+                box.append(chip);
+            });
+            lastFocus = false;
+        }
+
         function update() {
-            var art = state.art || (slug() === DEFAULT_SLUG ? DEFAULT_COVER : '');
+            var cur = slug();
+            var art = state.art || (cur === DEFAULT_SLUG ? DEFAULT_COVER : '');
             var img = html.find('.misto-radio__art');
             if (art) img.attr('src', art).show(); else img.hide();
 
-            html.find('.misto-radio__station').text(slug() === DEFAULT_SLUG ? 'Misto FM Deep' : 'Misto FM');
+            html.find('.misto-radio__station').text('Misto FM ' + stationName(cur));
             html.find('.misto-radio__title').text(state.title || (state.loading ? 'Завантаження…' : 'Misto FM'));
             html.find('.misto-radio__artist').text(state.artist || '');
             html.find('[data-act="toggle"]').text(
                 state.loading ? '… Завантаження' : (state.playing ? '■ Стоп' : '▶ Грати')
             );
+            html.find('.misto-radio__chip').each(function () {
+                $(this).toggleClass('misto-radio__chip--active', $(this).attr('data-slug') === cur);
+            });
         }
 
         this.create = function () {
             addStyle();
+            renderStations();
 
-            html.find('.selector').on('hover:enter', function () {
+            html.find('.misto-radio__btn').on('hover:enter', function () {
                 var act = $(this).data('act');
                 if (act === 'toggle') toggleAudio();
                 if (act === 'vdown') changeVolume(-0.1);
                 if (act === 'vup') changeVolume(0.1);
-            }).on('hover:focus', function () {
-                lastFocus = this;
             });
+            bindFocus(html.find('.misto-radio__btn'));
 
             unsub = subscribe(update);
             opened++;
             ensurePoll();
             refreshNow();
             update();
+
+            // оновлюємо список станцій з API
+            loadStations(function (changed) {
+                if (!changed) return;
+                renderStations();
+                update();
+                try {
+                    if (Lampa.Controller.enabled().name === 'misto_radio') Lampa.Controller.toggle('misto_radio');
+                } catch (e) {}
+            });
 
             this.activity.loader(false);
             this.activity.toggle();
@@ -224,7 +311,10 @@
                     else Lampa.Controller.toggle('menu');
                 },
                 right: function () { Navigator.move('right'); },
-                up: function () { Lampa.Controller.toggle('head'); },
+                up: function () {
+                    if (Navigator.canmove('up')) Navigator.move('up');
+                    else Lampa.Controller.toggle('head');
+                },
                 down: function () { Navigator.move('down'); },
                 back: function () { Lampa.Activity.backward(); }
             });
@@ -243,65 +333,70 @@
         };
     }
 
-    /* ---------- Налаштування та меню ---------- */
-
-    function addTextSetting(storageKey, title, description) {
-        Lampa.SettingsApi.addParam({
-            component: 'misto',
-            param: { name: storageKey + '_btn', type: 'button' },
-            field: { name: title, description: description },
-            onChange: function () {
-                Lampa.Input.edit({
-                    free: true,
-                    title: title,
-                    nosave: true,
-                    value: S(storageKey, '') || ''
-                }, function (val) {
-                    Lampa.Storage.set(storageKey, trim(val));
-                    Lampa.Noty.show(title + ': збережено');
-                    try { Lampa.Controller.toggle('settings_component'); } catch (e) {}
-                });
-            }
-        });
-    }
+    /* ---------- Налаштування та кнопка на верхній панелі ---------- */
 
     var ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9h16v10H4zM8 9l8-5M8 14h4M16 14h.01M16 17h.01"/></svg>';
 
     function addSettings() {
         Lampa.SettingsApi.addComponent({ component: 'misto', name: 'Misto FM', icon: ICON });
 
-        addTextSetting(
-            'misto_slug',
-            'Станція (slug)',
-            'Необов\'язково. За замовчуванням: ' + DEFAULT_SLUG
-        );
-
-        addTextSetting(
-            'misto_stream',
-            'Посилання на потік',
-            'Необов\'язково. Вкажіть, якщо автоматичне визначення потоку не працює'
-        );
+        Lampa.SettingsApi.addParam({
+            component: 'misto',
+            param: { name: 'misto_stream_btn', type: 'button' },
+            field: {
+                name: 'Посилання на потік',
+                description: 'Необов\'язково. Запасний варіант, якщо автоматичне визначення потоку не працює'
+            },
+            onChange: function () {
+                Lampa.Input.edit({
+                    free: true,
+                    title: 'Посилання на потік',
+                    nosave: true,
+                    value: S('misto_stream', '') || ''
+                }, function (val) {
+                    Lampa.Storage.set('misto_stream', trim(val));
+                    Lampa.Noty.show('Збережено');
+                    try { Lampa.Controller.toggle('settings_component'); } catch (e) {}
+                });
+            }
+        });
     }
 
-    function addMenu() {
-        var btn = $(
-            '<li class="menu__item selector">' +
-                '<div class="menu__ico">' + ICON + '</div>' +
-                '<div class="menu__text">Misto FM</div>' +
-            '</li>'
-        );
+    function openRadio() {
+        try {
+            var act = Lampa.Activity.active();
+            if (act && act.component === 'misto_radio') return;
+        } catch (e) {}
+        Lampa.Activity.push({ url: '', title: 'Misto FM', component: 'misto_radio', page: 1 });
+    }
 
-        btn.on('hover:enter', function () {
-            Lampa.Activity.push({ url: '', title: 'Misto FM', component: 'misto_radio', page: 1 });
-        });
+    function addHeadButton(tries) {
+        tries = tries || 0;
+        var bar = $('.head .head__actions');
 
-        $('.menu .menu__list').eq(0).append(btn);
+        if (!bar.length) {
+            if (tries < 20) setTimeout(function () { addHeadButton(tries + 1); }, 500);
+            return;
+        }
+        if ($('.misto-head').length) return;
+
+        var btn = $('<div class="head__action selector misto-head">' + ICON + '</div>');
+        btn.on('hover:enter', openRadio);
+        bar.prepend(btn);
+
+        btn.toggleClass('misto-head--on', state.playing);
     }
 
     function init() {
+        addStyle();
         Lampa.Component.add('misto_radio', RadioComponent);
         addSettings();
-        addMenu();
+        addHeadButton();
+
+        // підсвічуємо кнопку, коли радіо грає
+        subscribe(function () {
+            $('.misto-head').toggleClass('misto-head--on', !!state.playing);
+        });
 
         // коли запускається відео в Lampa, радіо ставимо на паузу
         try {
