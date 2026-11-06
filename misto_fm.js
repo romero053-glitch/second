@@ -87,22 +87,41 @@
         state.history = d.history || [];
     }
 
-    function refreshNow() {
+        function refreshNow() {
         var requested = slug();
+        var viaProxy = !!trim(S('misto_proxy', ''));
+
+        function warn(text) {
+            if (apiWarned) return;
+            apiWarned = true;
+            Lampa.Noty.show('Misto FM: ' + text);
+        }
 
         new Lampa.Reguest().silent(apiUrl('/api/nowplaying/' + requested), function (j) {
+            // страховка: якщо відповідь прийшла рядком, розбираємо її самі
+            if (typeof j === 'string') {
+                try { j = JSON.parse(j); } catch (e) {
+                    warn('відповідь API не розпізнано (' + (viaProxy ? 'через проксі' : 'напряму') + ')');
+                    return;
+                }
+            }
+
             try {
                 var st = j && j.station;
-                var np = j && j.now_playing;
+                if (!st) {
+                    warn('у відповіді API немає даних станції');
+                    return;
+                }
+                var np = j.now_playing;
                 var song = np && np.song;
 
-                var url = st && st.listen_url;
-                if (!url && st && st.mounts && st.mounts.length) {
+                var url = st.listen_url;
+                if (!url && st.mounts && st.mounts.length) {
                     var def = st.mounts.filter(function (m) { return m.is_default; })[0] || st.mounts[0];
                     url = def && def.url;
                 }
 
-                var hist = (j && j.song_history || []).slice(0, HISTORY_SHOW).map(function (h) {
+                var hist = (j.song_history || []).slice(0, HISTORY_SHOW).map(function (h) {
                     return songLine(h && h.song);
                 }).filter(Boolean);
 
@@ -111,7 +130,7 @@
                     artist: song ? (song.artist || '') : '',
                     art: song ? fixUrl(song.art || '') : '',
                     listenUrl: fixUrl(url || ''),
-                    next: songLine(j && j.playing_next && j.playing_next.song),
+                    next: songLine(j.playing_next && j.playing_next.song),
                     history: hist
                 };
 
@@ -119,12 +138,13 @@
                     applyCurrent();
                     notify();
                 }
-            } catch (e) {}
-        }, function () {
-            if (!apiWarned) {
-                apiWarned = true;
-                Lampa.Noty.show('Misto FM: API станції недоступне. Спробуйте вказати проксі в Налаштування → Misto FM');
+            } catch (e) {
+                warn('помилка обробки відповіді API');
             }
+        }, function () {
+            warn(viaProxy
+                ? 'API недоступне через проксі (перевірте адресу й ключ)'
+                : 'API недоступне напряму, вкажіть проксі в Налаштування → Misto FM');
             notify();
         });
     }
