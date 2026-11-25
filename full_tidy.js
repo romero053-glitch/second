@@ -10,6 +10,8 @@
     window.full_tidy_plugin = true;
 
     var MAX_COUNTRIES = 3;
+    // 'after-year' = одразу після року, 'end' = у кінці рядка (після рейтингу)
+    var COUNTRY_PLACE = 'after-year';
 
     var DETAILS = ['Детально', 'Подробно', 'Details'];
     var COUNTRIES = ['Країни', 'Країна', 'Страны', 'Страна', 'Countries', 'Country'];
@@ -28,10 +30,11 @@
     // листовий елемент, текст якого точно збігається з одним зі списку
     function leafWithText(root, list) {
         var found = null;
-        root.find('div,span,a,b,p,h1,h2,h3,h4').each(function () {
+        root.find('div,span,a,b,p,h1,h2,h3,h4,li,dt,dd,label').each(function () {
             var el = $(this);
             if (el.children().length) return;
-            if (list.indexOf(trim(el.text())) > -1) { found = el; return false; }
+            var t = trim(el.text()).replace(/:$/, '');
+            if (list.indexOf(t) > -1) { found = el; return false; }
         });
         return found;
     }
@@ -54,8 +57,29 @@
         return btn.length ? btn.parent() : null;
     }
 
-    function tidy(root) {
-        var res = { year: false, tags: false, details: false };
+    // країни з даних TMDB (запасний варіант, якщо блоку "Країни" на сторінці немає)
+    function countriesFromData(movie) {
+        if (!movie) return [];
+        var dn = null;
+        try { dn = new Intl.DisplayNames(['uk'], { type: 'region' }); } catch (e) {}
+
+        function name(code, fallback) {
+            if (code === 'US') return 'США';
+            if (dn && code) { try { return dn.of(code); } catch (e) {} }
+            return fallback || code || '';
+        }
+
+        var list = movie.production_countries || [];
+        var out = list.map(function (c) { return name(c.iso_3166_1 || c.iso, c.name); });
+
+        if (!out.length && movie.origin_country && movie.origin_country.length) {
+            out = movie.origin_country.map(function (code) { return name(code, code); });
+        }
+        return out.filter(Boolean);
+    }
+
+    function tidy(root, movie) {
+        var res = { year: false, tags: false, details: false, country: false };
 
         /* 1. "Детально" та опис */
         var head = leafWithText(root, DETAILS);
@@ -65,7 +89,6 @@
             res.details = true;
         }
         root.find('.full-descr__text').hide();
-        // запасний варіант: довгі текстові блоки всередині .full-descr
         root.find('.full-descr').find('div,p,span').filter(function () {
             var el = $(this);
             return !el.children().length && trim(el.text()).length > 80;
@@ -73,23 +96,37 @@
 
         /* 2. Країни поруч із роком */
         var yearEl = findYearEl(root);
-        if (yearEl && !root.find('.fulltidy-country').length) {
-            var label = leafWithText(root, COUNTRIES);
-            if (label) {
-                var block = label.parent();
-                var value = trim(label.next().text()) ||
-                    trim(block.text().replace(trim(label.text()), ''));
-                if (value) {
-                    var text = value.split(/\s*,\s*/).slice(0, MAX_COUNTRIES).join(', ');
+        res.year = !!yearEl;
+
+        if (yearEl) {
+            if (root.find('.fulltidy-country').length) {
+                res.country = true;
+            } else {
+                var text = '';
+                var block = null;
+
+                var label = leafWithText(root, COUNTRIES);
+                if (label) {
+                    block = label.parent();
+                    text = trim(label.next().text()) ||
+                        trim(block.text().replace(trim(label.text()), ''));
+                }
+                if (!text) text = countriesFromData(movie).join(', ');
+
+                if (text) {
+                    text = text.split(/\s*,\s*/).slice(0, MAX_COUNTRIES).join(', ');
                     var span = $('<span class="fulltidy-country"></span>')
                         .addClass(yearEl.attr('class') || '')
                         .text(text);
-                    yearEl.after(span);
-                    block.hide();
+
+                    if (COUNTRY_PLACE === 'end') yearEl.parent().append(span);
+                    else yearEl.after(span);
+
+                    if (block) block.hide();
+                    res.country = true;
                 }
             }
         }
-        res.year = !!yearEl;
 
         /* 3. Жанр / Виробництво / Теги вище */
         var chips = root.find('.selector').filter(function () {
@@ -107,17 +144,17 @@
         return res;
     }
 
-    function run(root) {
+    function run(root, movie) {
         if (!root || !root.length) return;
-        var delays = [0, 300, 900, 2000, 4000];
+        var delays = [0, 300, 900, 2000, 4000, 6000];
         delays.forEach(function (ms, i) {
             setTimeout(function () {
                 try {
-                    var r = tidy(root);
-                    if (i === delays.length - 1 && (!r.year || !r.tags)) {
+                    var r = tidy(root, movie);
+                    if (i === delays.length - 1 && (!r.year || !r.tags || !r.country)) {
                         console.log('[full-tidy] не знайдено:', JSON.stringify(r));
-                        Lampa.Noty.show('Full Tidy: не всі елементи знайдено (' +
-                            (r.year ? '' : 'рік ') + (r.tags ? '' : 'кнопки жанрів') + ')');
+                        Lampa.Noty.show('Full Tidy: не знайдено — ' +
+                            (r.year ? '' : 'рік; ') + (r.country ? '' : 'країни; ') + (r.tags ? '' : 'кнопки жанрів'));
                     }
                 } catch (e) { console.log('[full-tidy]', e); }
             }, ms);
@@ -128,10 +165,15 @@
         addStyle();
         Lampa.Listener.follow('full', function (e) {
             if (e.type !== 'complite' && e.type !== 'complete') return;
+
             var root = null;
             try { root = e.object.activity.render(); } catch (x) {}
             if (!root) { try { root = Lampa.Activity.active().activity.render(); } catch (y) {} }
-            run(root);
+
+            var movie = null;
+            try { movie = (e.data && e.data.movie) || (e.object && e.object.card) || null; } catch (z) {}
+
+            run(root, movie);
         });
     }
 
